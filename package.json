@@ -1,0 +1,30 @@
+{
+  "name": "comp4601-a1",
+  "version": "1.0.0",
+  "description": "Comp4601 Lab 5 - Assignment 1",
+  "main": "database-init.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/allan-wang9/Comp4601-A1.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/allan-wang9/Comp4601-A1/issues"
+  },
+  "homepage": "https://github.com/allan-wang9/Comp4601-A1#readme",
+  "dependencies": {
+    "connect-mongo": "^4.6.0",
+    "connect-mongodb-session": "^3.1.1",
+    "crawler": "^1.4.0",
+    "elasticlunr": "^0.9.5",
+    "express": "^4.17.1",
+    "ml-matrix": "^6.10.7",
+    "mongodb": "^4.2.1",
+    "pug": "^3.0.2"
+  }
+}
