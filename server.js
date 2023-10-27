@@ -92,18 +92,7 @@ function computePageRankFromAdjMatrix(matrix) {
     return rank;
 }
 
-const convertArrayToObject = (array, key) => {
-    const initialValue = {};
-    return array.reduce((obj, item) => {
-        return {
-            ...obj,
-            [item[key]]: item,
-        };
-    }, initialValue);
-};
-
-
-//CRAWLER ----------------------------------------------------------------------------
+//CRAWLER for fruits websites----------------------------------------------------------------------------
 const visitedURLs = new Set();
 
 const c = new Crawler({
@@ -146,17 +135,20 @@ const c = new Crawler({
                 (async function savePages() {
                     const { client, db } = await connectToDatabase();
 
-                    //Store the content from each page within a database.
-                    await db.collection("pages").insertOne({
-                        title: title,
-                        href: res.request.uri.href,
-                        a: anchorTexts,
-                        p: paragraphText,
-                        body: bodyText,
-                        //outgoing links from this page
-                        linksTo: linkedTo,
-                    });
+                    if (await db.collection("pages").countDocuments({ 'title': title }) == 0) {
+                        //Store the content from each page within a database.
+                        await db.collection("pages").insertOne({
+                            title: title,
+                            href: res.request.uri.href,
+                            a: anchorTexts,
+                            p: paragraphText,
+                            body: bodyText,
+                            //outgoing links from this page
+                            linksTo: linkedTo,
+                        });
+                    }
                     closeDatabaseConnection(client);
+
                 })();
             }
         }
@@ -178,6 +170,7 @@ console.log("Start Crawling...");
 app.get('/', (req, res) => {
     res.send(pug.renderFile("./views/index.pug"));
 });
+
 //fruits search page
 app.get('/fruitsSearch', (req, res) => {
     res.send(pug.renderFile("./views/fruitsSearch.pug"));
@@ -187,17 +180,19 @@ app.get('/fruitsSearch', (req, res) => {
 //fruits?q=banana&boost=true&limit=10
 app.get('/fruits', (req, res) => {
 
-    //add PageRank in pagesFromDB
+
     (async () => {
         let { q, boost, limit } = req.query;
 
         boost = (boost === 'true');
         limit = parseInt(limit);
 
+
         const { client, db } = await connectToDatabase();
         const pagesFromDB = await db.collection('pages').find().toArray();
         // console.log(pagesFromDB);
         closeDatabaseConnection(client);
+        //add PageRank in pagesFromDB
         const adjMatrixData = await computeAdjacencyMatrix();
         const pageRankResults = computePageRankFromAdjMatrix(adjMatrixData);
         // console.log(pageRankResults);
@@ -212,6 +207,7 @@ app.get('/fruits', (req, res) => {
             })
         });
         // console.log(pagesFromDB);
+        console.log(`PageRank score is added...`);
 
         //indexing
         const index = elasticlunr(function () {
@@ -223,21 +219,50 @@ app.get('/fruits', (req, res) => {
 
         //add the index on each page
         pagesFromDB.forEach((page) => {
-            index.addDoc({ mongo_id: page._id, title: page.title, p: page.p, a: page.a });
+            index.addDoc({
+                mongo_id: page._id,
+                title: page.title,
+                p: page.p,
+                a: page.a,
+            });
         });
 
-        const refAndSearchScores = index.search(q, {}).slice(0);
+        const refAndSearchScores = index.search(q, {});
 
-        pagesFromDB.forEach((page) => {
-            refAndSearchScores.forEach((refAndSearchScore) => {
-                if (page._id == refAndSearchScore.ref)
-                    page.score = refAndSearchScore.score;//add Search Score
-            })
-        });
+        //each page should not be boosted
+        if (!boost) {
+            
+
+            //add Search Score
+            pagesFromDB.forEach((page) => {
+                refAndSearchScores.forEach((refAndSearchScore) => {
+                    if (page._id == refAndSearchScore.ref)
+                        page.score = refAndSearchScore.score;
+                })
+            });
+
+        } else {//each page should be boosted with PageRank
+
+            //add Search Score
+            pagesFromDB.forEach((page) => {
+                refAndSearchScores.forEach((refAndSearchScore) => {
+                    if (page._id == refAndSearchScore.ref)
+                        page.score = refAndSearchScore.score;
+                })
+            });
+
+            pagesFromDB.forEach((page) => {
+                refAndSearchScores.forEach((refAndSearchScore) => {
+                    if (page._id == refAndSearchScore.ref)
+                        page.score = page.score * page.rank;//boost with PageRank by multiplying two values (from Dave's answer on Discord)
+                })
+            });
+        }
+
 
 
         // console.log(pagesFromDB);
-        console.log(`PageRank and Search Score is added...`);
+        console.log(`Search Score is added...`);
 
         pagesFromDB.sort((a, b) => b.score - a.score);
         const pagesToClient = pagesFromDB.slice(0, limit);
@@ -274,10 +299,7 @@ app.get('/fruits', (req, res) => {
         res.send(pug.renderFile("./views/fruitsResult.pug", {
             results: pagesToClient
         }));
-
-
     })();
-
 });
 
 //represents a request to search the data from the fruit example

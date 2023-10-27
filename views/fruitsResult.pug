@@ -12,10 +12,12 @@ body
         ul
             each result in results
                 span URL: 
-                a(href=result.href) #{result.href} 
+                a(href=result.href) #{result.href}
                 br
                 span Title: #{result.title} 
                 br
                 span Search Score: #{result.score}
+                br
+                span PageRank: #{result.rank}
                 br
                 br
