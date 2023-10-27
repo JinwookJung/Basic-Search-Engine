@@ -167,29 +167,11 @@ const c = new Crawler({
 c.on('drain', function () {
     console.log("Done.");
     console.log(visitedURLs.size);
-
-    // //perform PageRank after crawling is done
-    // (async function getPageRank() {
-    //     const adjMatrixData = await computeAdjacencyMatrix();
-    //     const pageRankResults = computePageRankFromAdjMatrix(adjMatrixData);
-    //     const { client, db } = await connectToDatabase();
-    //     const pages = await db.collection('pages').find().toArray();
-    //     closeDatabaseConnection(client);
-    //     const rankedPages = pages.map((page, index) => ({
-    //         url: page.href,
-    //         rank: pageRankResults[index]
-    //     }));
-    //     rankedPages.sort((a, b) => b.rank - a.rank);
-    //     rankedPages.slice(0, 25).forEach((page, index) => {
-    //         console.log(`#${index + 1}. (${page.rank.toFixed(10)}) ${page.url}`);
-    //     });
-    // })();
-
 });
 
 console.log("Start Crawling...");
 //Queue a URL, which starts the crawl
-c.queue('https://people.scs.carleton.ca/~davidmckenney/fruitgraph/N-0.html');
+// c.queue('https://people.scs.carleton.ca/~davidmckenney/fruitgraph/N-0.html');
 
 //ROUTE------------------------------------------------------------------------------------------
 //index page
@@ -204,15 +186,33 @@ app.get('/fruitsSearch', (req, res) => {
 //fruits result page
 //fruits?q=banana&boost=true&limit=10
 app.get('/fruits', (req, res) => {
-    
-    let { q, boost, limit } = req.query;
 
-    boost = (boost === 'true');
-    limit = parseInt(limit);
+    //add PageRank in pagesFromDB
+    (async () => {
+        let { q, boost, limit } = req.query;
 
+        boost = (boost === 'true');
+        limit = parseInt(limit);
 
-    //boost == false, not using PageRank score
-    if (!boost) {
+        const { client, db } = await connectToDatabase();
+        const pagesFromDB = await db.collection('pages').find().toArray();
+        // console.log(pagesFromDB);
+        closeDatabaseConnection(client);
+        const adjMatrixData = await computeAdjacencyMatrix();
+        const pageRankResults = computePageRankFromAdjMatrix(adjMatrixData);
+        // console.log(pageRankResults);
+        const rankedPages = pagesFromDB.map((page, index) => ({
+            url: page.href,
+            rank: pageRankResults[index]
+        }));
+        pagesFromDB.forEach((page) => {
+            rankedPages.forEach((pageWithRank) => {
+                if (page.href === pageWithRank.url)
+                    page.rank = pageWithRank.rank;
+            })
+        });
+        // console.log(pagesFromDB);
+
         //indexing
         const index = elasticlunr(function () {
             this.addField('title');
@@ -221,100 +221,63 @@ app.get('/fruits', (req, res) => {
             this.setRef('mongo_id');
         });
 
-        //add the index with data from MongoDB
-        (async function populateElasticlunrIndex() {
-            const { client, db } = await connectToDatabase();
-            await db.collection("pages").find().forEach((page) => {
-                index.addDoc({ mongo_id: page._id, title: page.title, p: page.p, a: page.a });
-            });
-            const refAndSearchScores = index.search(q, {}).slice(0, limit);
-            // console.log(refAndSearchScores);
-            // console.log(results);
-            let pagesToClient = [];
+        //add the index on each page
+        pagesFromDB.forEach((page) => {
+            index.addDoc({ mongo_id: page._id, title: page.title, p: page.p, a: page.a });
+        });
 
-            //find the page with the given title 
-            const pages = await db.collection('pages').find().toArray();
-            pages.forEach((page) => {
-                refAndSearchScores.forEach((refAndSearchScore) => {
-                    if (page._id == refAndSearchScore.ref) {
-                        let pageDetails = {};
-                        pageDetails = { ...page };
-                        pageDetails.score = refAndSearchScore.score;//add Search Score
-                        pagesToClient.push(pageDetails);
-                    }
-                })
-            });
+        const refAndSearchScores = index.search(q, {}).slice(0);
+
+        pagesFromDB.forEach((page) => {
+            refAndSearchScores.forEach((refAndSearchScore) => {
+                if (page._id == refAndSearchScore.ref)
+                    page.score = refAndSearchScore.score;//add Search Score
+            })
+        });
 
 
-            // refAndSearchScores.forEach(async (refAndSearchScore) => {
-            //     const page = await db.collection('pages').findOne({ _id: ObjectID(refAndSearchScore.ref) })
-            //         .then((page) => {
+        // console.log(pagesFromDB);
+        console.log(`PageRank and Search Score is added...`);
 
-            //         });
+        pagesFromDB.sort((a, b) => b.score - a.score);
+        const pagesToClient = pagesFromDB.slice(0, limit);
+        // console.log(pagesToClient);
 
-            // //get PageRank score
-            // const adjMatrixData = await computeAdjacencyMatrix();
-            // const pageRankResults = computePageRankFromAdjMatrix(adjMatrixData);
-            // console.log(pageRankResults);
+        //Response to json request
+        if (req.headers['content-type'] == `application/json`) {
+            //add group member name
+            for (const page of pagesToClient) {
+                //add name
+                page.name = `Allan Wang, Saad Qamar, Jinwook Jung`;
 
-            // const pages = await db.collection('pages').find().toArray();
-            // const rankedPages = pages.map((page, index) => ({
-            //     url: page.href,
-            //     rank: pageRankResults[index]
-            // }));
+                //remove key and value that doesn't need  
+                delete page.a;
+                delete page.p;
+                delete page.linksTo;
+                delete page.body;
+                delete page._id;
 
-            // // console.log(rankedPages);
-
-            // pagesToClient.forEach((page) => {
-            //     if (page.href.localeCompare(rankedPages.url))
-            //         page.rank = rankedPages.rank;
-            // });
-
-            // // console.log(pagesToClient);
-
-            if (pagesToClient.length === limit) {
-                pagesToClient.sort((a, b) => b.score - a.score);
-                closeDatabaseConnection(client);
-                // console.log(pagesToClient);
-
-                //Response to text/html request
-                if (req.accepts(`text/html`)) {
-                    res.send(pug.renderFile("./views/fruitsResult.pug", {
-                        results: pagesToClient
-                    }));
-                    return;
-                }
-
-                //Response to json request
-                if (req.accepts(`application/JSON`)) {
-                    //add group member name
-                    for (const page of pagesToClient) {
-                        //add name
-                        page.name = `Allan Wang, Saad Qamar, Jinwook Jung`;
-
-                        //remove key and value that doesn't need  
-                        delete page.a;
-                        delete page.p;
-                        delete page.linksTo;
-                        delete page.body;
-                        delete page._id;
-
-                        //change key "href" to "url"
-                        page['url'] = page.href;
-                        delete page.href;
-                    }
-                    //convert js Array to object
-                    const objFromArray = {};
-                    pagesToClient.forEach((item, index) => {
-                        objFromArray[`${index + 1}`] = item;
-                    });
-                    // console.log(objFromArray);
-                    res.json(JSON.stringify(objFromArray));
-                    return;
-                }
+                //change key "href" to "url"
+                page['url'] = page.href;
+                delete page.href;
             }
-        })();
-    }
+            //convert js Array to object
+            const objFromArray = {};
+            pagesFromDB.forEach((item, index) => {
+                objFromArray[`${index + 1}`] = item;
+            });
+            // console.log(objFromArray);
+            res.json(JSON.stringify(objFromArray));
+
+        }
+
+        res.send(pug.renderFile("./views/fruitsResult.pug", {
+            results: pagesToClient
+        }));
+
+
+    })();
+
 });
 
 //represents a request to search the data from the fruit example
