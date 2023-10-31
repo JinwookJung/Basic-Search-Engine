@@ -22,6 +22,80 @@ app.use(express.static('public'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+//CRAWLER for fruits websites----------------------------------------------------------------------------
+function crawlFruitsWebsites() {
+    const visitedURLs = new Set();
+
+    const c = new Crawler({
+        maxConnections: 10,
+        jQuery: true,
+        // rateLimit: 1000, 
+        // retries: 3, 
+        // retryTimeout: 5000,
+        //This will be called for each crawled page
+        callback: function (error, res, done) {
+            if (error) {
+                console.log(error);
+            }
+
+            if (res.$) {
+                const currentURL = res.request.uri.href;
+
+                let $ = res.$;
+                const linkedTo = [];
+                const title = $("title").text();
+                const anchorTexts = $("a").map(function () { return $(this).text(); }).get().join(', ');
+                const paragraphText = $("p").text();
+                const bodyText = $("body").text();
+
+                let links = $("a");
+                $(links).each(function (i, link) {
+                    const href = $(link).attr('href');
+                    const fullURL = new URL(href, res.request.uri.href).toString();
+                    linkedTo.push(fullURL);
+                    if (!visitedURLs.has(fullURL)) {
+                        visitedURLs.add(fullURL);
+                        c.queue(fullURL);
+                    }
+                });
+
+                //save pages only ending with .html
+                if (currentURL.endsWith(".html")) {
+                    //Save page contents
+                    (async function savePages() {
+                        const { client, db } = await connectToDatabase();
+
+                        if (await db.collection("pages").countDocuments({ 'title': title }) == 0) {
+                            //Store the content from each page within a database.
+                            await db.collection("pages").insertOne({
+                                title: title,
+                                href: res.request.uri.href,
+                                a: anchorTexts,
+                                p: paragraphText,
+                                body: bodyText,
+                                //outgoing links from this page
+                                linksTo: linkedTo,
+                            });
+                        }
+                        closeDatabaseConnection(client);
+
+                    })();
+                }
+            }
+            done();
+        }
+    });
+
+    c.on('drain', function () {
+        console.log("Done.");
+        console.log(visitedURLs.size + " Websites in Database...");
+    });
+
+    //Queue a URL, which starts the crawl
+    c.queue('https://people.scs.carleton.ca/~davidmckenney/fruitgraph/N-0.html');
+}
+
+
 //connect to the database
 async function connectToDatabase() {
     try {
@@ -92,78 +166,8 @@ function computePageRankFromAdjMatrix(matrix) {
     return rank;
 }
 
-//CRAWLER for fruits websites----------------------------------------------------------------------------
-const visitedURLs = new Set();
 
-const c = new Crawler({
-    maxConnections: 10,
-    jQuery: true,
-    // rateLimit: 1000, 
-    // retries: 3, 
-    // retryTimeout: 5000,
-
-    //This will be called for each crawled page
-    callback: function (error, res, done) {
-        if (error) {
-            console.log(error);
-        }
-
-        if (res.$) {
-            const currentURL = res.request.uri.href;
-
-            let $ = res.$;
-            const linkedTo = [];
-            const title = $("title").text();
-            const anchorTexts = $("a").map(function () { return $(this).text(); }).get().join(', ');
-            const paragraphText = $("p").text();
-            const bodyText = $("body").text();
-
-            let links = $("a")
-            $(links).each(function (i, link) {
-                const href = $(link).attr('href');
-                const fullURL = new URL(href, res.request.uri.href).toString();
-                linkedTo.push(fullURL);
-                if (!visitedURLs.has(fullURL)) {
-                    visitedURLs.add(fullURL);
-                    c.queue(fullURL);
-                }
-            });
-
-            //save pages only ending with .html
-            if (currentURL.endsWith(".html")) {
-                //Save page contents
-                (async function savePages() {
-                    const { client, db } = await connectToDatabase();
-
-                    if (await db.collection("pages").countDocuments({ 'title': title }) == 0) {
-                        //Store the content from each page within a database.
-                        await db.collection("pages").insertOne({
-                            title: title,
-                            href: res.request.uri.href,
-                            a: anchorTexts,
-                            p: paragraphText,
-                            body: bodyText,
-                            //outgoing links from this page
-                            linksTo: linkedTo,
-                        });
-                    }
-                    closeDatabaseConnection(client);
-
-                })();
-            }
-        }
-        done();
-    }
-});
-
-c.on('drain', function () {
-    console.log("Done.");
-    console.log(visitedURLs.size);
-});
-
-console.log("Start Crawling...");
-//Queue a URL, which starts the crawl
-// c.queue('https://people.scs.carleton.ca/~davidmckenney/fruitgraph/N-0.html');
+crawlFruitsWebsites();
 
 //ROUTE------------------------------------------------------------------------------------------
 //index page
@@ -306,3 +310,4 @@ app.get('/fruits', (req, res) => {
 app.get('/personal', (req, res) => {
 
 });
+
