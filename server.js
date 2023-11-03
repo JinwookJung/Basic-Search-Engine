@@ -9,6 +9,7 @@ const mongoURL = 'mongodb://127.0.0.1:27017';
 const Crawler = require("crawler");
 const { MongoClient, ObjectID } = require("mongodb");
 const { Matrix } = require("ml-matrix");
+const URL = require('url').URL;
 const elasticlunr = require("elasticlunr");
 app.set('view engine', 'pug');
 app.set('views', path.join(__dirname, 'views'));
@@ -17,7 +18,7 @@ app.listen(PORT, () => {
     console.log(`Server started on port ${PORT}`);
 });
 
-//MIDDLEWARE SEQUENCE ----------------------------------------------------------------
+//MIDDLEWARE SEQUENCE -----------------------------------------------------------------------------------
 app.use(express.static('public'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -95,6 +96,86 @@ function crawlFruitsWebsites() {
     c.queue('https://people.scs.carleton.ca/~davidmckenney/fruitgraph/N-0.html');
 }
 
+//CRAWLER for personal websites--------------------------------------------------------------------------
+function crawlWikipedia() {
+    let insertionCount = 0;
+    let crawlerStopped = false;
+    const visitedURLs = new Set();
+
+    const c = new Crawler({
+        maxConnections: 10,
+        respectRobotsTxt: true,
+        callback: async function (error, res, done) {
+            if (error) {
+                console.error(error);
+            } else {
+                // Check if jQuery was loaded by the crawler
+                if (typeof res.$ === "function") {
+                    const $ = res.$;
+                    const title = $("title").text();
+
+                    // Only proceed if we have not stopped the crawler
+                    if (!crawlerStopped) {
+                        console.log(`Inserting title: ${title}`);
+                        const { client, db } = await connectToDatabase();
+
+                        try {
+                            await insertPageIntoDatabase(db, 'wikiPages', {
+                                title: title,
+                                url: res.request.uri.href,
+                            });
+                            insertionCount++;
+                        } catch (error) {
+                            console.error('Error inserting data into the database', error);
+                        } finally {
+                            await client.close();
+                        }
+                    }
+
+                    // If limit is reached, set flag to true
+                    if (insertionCount >= 750) {
+                        crawlerStopped = true;
+                        done();
+                        return; // Stop further processing
+                    }
+
+                    // Queue new URLs if crawler has not stopped
+                    if (!crawlerStopped) {
+                        $('a').each(function () {
+                            const toQueueUrl = $(this).attr('href');
+                            if (toQueueUrl && !toQueueUrl.startsWith('#') && !toQueueUrl.startsWith('javascript:')) {
+                                const absoluteUrl = new URL(toQueueUrl, res.request.uri.href).href;
+                                if (!visitedURLs.has(absoluteUrl)) {
+                                    visitedURLs.add(absoluteUrl);
+                                    c.queue(absoluteUrl);
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    // Handle non-HTML or failed jQuery load here
+                    console.warn('The response body was not HTML or jQuery could not be loaded.');
+                }
+            }
+            done();
+        }
+    });
+
+    c.on('drain', function () {
+        console.log("Done crawling the wiki pages.");
+        console.log(visitedURLs.size + " Websites in Database...");
+        // Optionally close your server or any other clean up after 'drain'
+    });
+
+    // Start crawling from Wikipedia's main page
+    c.queue('https://en.wikipedia.org/wiki/Main_Page');
+}
+
+//CRAWL SEQUENCE ---------------------------------------------------------------------------
+crawlWikipedia();
+crawlFruitsWebsites();
+
+//FUNCTIONS --------------------------------------------------------------------------------
 
 //connect to the database
 async function connectToDatabase() {
@@ -106,6 +187,15 @@ async function connectToDatabase() {
     } catch (err) {
         console.error("Failed to connect to database.", err);
         throw err;
+    }
+}
+
+//insert single page into the database
+async function insertPageIntoDatabase(db, collectionName, pageData) {
+    try {
+        await db.collection(collectionName).insertOne(pageData);
+    } catch (error) {
+        console.error('Error inserting data into the database', error);
     }
 }
 
@@ -143,6 +233,7 @@ async function computeAdjacencyMatrix() {
     return matrix;
 }
 
+//compute page rank from adjacency matrix
 function computePageRankFromAdjMatrix(matrix) {
     const alpha = 0.1;
     const numberOfPages = matrix.length;
@@ -165,9 +256,6 @@ function computePageRankFromAdjMatrix(matrix) {
     // console.log(rank);
     return rank;
 }
-
-
-crawlFruitsWebsites();
 
 //ROUTE------------------------------------------------------------------------------------------
 //index page
@@ -310,4 +398,3 @@ app.get('/fruits', (req, res) => {
 app.get('/personal', (req, res) => {
 
 });
-
