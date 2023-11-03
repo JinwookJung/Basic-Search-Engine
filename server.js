@@ -109,7 +109,6 @@ function crawlWikipedia() {
             if (error) {
                 console.error(error);
             } else {
-                // Check if jQuery was loaded by the crawler
                 if (typeof res.$ === "function") {
                     const $ = res.$;
                     const title = $("title").text();
@@ -153,8 +152,8 @@ function crawlWikipedia() {
                         });
                     }
                 } else {
-                    // Handle non-HTML or failed jQuery load here
-                    console.warn('The response body was not HTML or jQuery could not be loaded.');
+                    // Handle non-HTML
+                    console.warn('The response body was not HTML.');
                 }
             }
             done();
@@ -164,10 +163,9 @@ function crawlWikipedia() {
     c.on('drain', function () {
         console.log("Done crawling the wiki pages.");
         console.log(visitedURLs.size + " Websites in Database...");
-        // Optionally close your server or any other clean up after 'drain'
     });
 
-    // Start crawling from Wikipedia's main page
+    // Crawl from the main page
     c.queue('https://en.wikipedia.org/wiki/Main_Page');
 }
 
