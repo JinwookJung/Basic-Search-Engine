@@ -208,9 +208,9 @@ async function closeDatabaseConnection(client) {
 }
 
 //function to compute the page rank
-async function computeAdjacencyMatrix() {
+async function computeAdjacencyMatrix(collection) {
     const { client, db } = await connectToDatabase();
-    const pages = await db.collection('pages').find().toArray();
+    const pages = await db.collection(collection).find().toArray();
     closeDatabaseConnection(client);
     const pageIndices = {};
     const matrix = Array(pages.length).fill(0).map(row => Array(pages.length).fill(0));
@@ -266,6 +266,11 @@ app.get('/fruitsSearch', (req, res) => {
     res.send(pug.renderFile("./views/fruitsSearch.pug"));
 });
 
+//wiki search page
+app.get('/wikiSearch', (req, res) => {
+    res.send(pug.renderFile("./views/wikiSearch.pug"));
+});
+
 //fruits result page
 //fruits?q=banana&boost=true&limit=10
 app.get('/fruits', (req, res) => {
@@ -280,7 +285,7 @@ app.get('/fruits', (req, res) => {
         // console.log(pagesFromDB);
         closeDatabaseConnection(client);
         //add PageRank in pagesFromDB
-        const adjMatrixData = await computeAdjacencyMatrix();
+        const adjMatrixData = await computeAdjacencyMatrix("pages");
         const pageRankResults = computePageRankFromAdjMatrix(adjMatrixData);
         // console.log(pageRankResults);
         const rankedPages = pagesFromDB.map((page, index) => ({
@@ -384,11 +389,122 @@ app.get('/fruits', (req, res) => {
     })();
 });
 
-//represents a request to search the data from the fruit example
+//wiki result page
+//wiki?q=Monopoly&boost=true&limit=10
 app.get('/personal', (req, res) => {
 
-    //Requires implementation (ongoing), we use the same logic for fruits here 
+    (async () => {
+        let { q, boost, limit } = req.query;
+        boost = (boost === 'true');
+        limit = parseInt(limit);
 
+        const { client, db } = await connectToDatabase();
+        const pagesFromDB = await db.collection('wikiPages').find().toArray();
+        // console.log(pagesFromDB);
+        closeDatabaseConnection(client);
+        //add PageRank in pagesFromDB
+        const adjMatrixData = await computeAdjacencyMatrix("wikiPages");
+        const pageRankResults = computePageRankFromAdjMatrix(adjMatrixData);
+        // console.log(pageRankResults);
+        const rankedPages = pagesFromDB.map((page, index) => ({
+            url: page.href,
+            rank: pageRankResults[index]
+        }));
+        pagesFromDB.forEach((page) => {
+            rankedPages.forEach((pageWithRank) => {
+                if (page.href === pageWithRank.url)
+                    page.rank = pageWithRank.rank;
+            })
+        });
+        // console.log(pagesFromDB);
+        console.log(`PageRank score is added...`);
+
+        //indexing
+        const index = elasticlunr(function () {
+            this.addField('title');
+            this.addField('p');
+            this.addField('a');
+            this.setRef('mongo_id');
+        });
+
+        //add the index on each page
+        pagesFromDB.forEach((page) => {
+            index.addDoc({
+                mongo_id: page._id,
+                title: page.title,
+                p: page.p,
+                a: page.a,
+            });
+        });
+
+        const refAndSearchScores = index.search(q, {});
+
+        //each page should not be boosted
+        if (!boost) {
+            //add Search Score
+            pagesFromDB.forEach((page) => {
+                refAndSearchScores.forEach((refAndSearchScore) => {
+                    if (page._id == refAndSearchScore.ref)
+                        page.score = refAndSearchScore.score;
+                })
+            });
+
+        } else {//each page should be boosted with PageRank
+
+            //add Search Score
+            pagesFromDB.forEach((page) => {
+                refAndSearchScores.forEach((refAndSearchScore) => {
+                    if (page._id == refAndSearchScore.ref)
+                        page.score = refAndSearchScore.score;
+                })
+            });
+
+            pagesFromDB.forEach((page) => {
+                refAndSearchScores.forEach((refAndSearchScore) => {
+                    if (page._id == refAndSearchScore.ref)
+                        page.score = page.score * page.rank;//boost with PageRank by multiplying two values (from Dave's answer on Discord)
+                })
+            });
+        }
+
+        // console.log(pagesFromDB);
+        console.log(`Search Score is added...`);
+
+        pagesFromDB.sort((a, b) => b.score - a.score);
+        const pagesToClient = pagesFromDB.slice(0, limit);
+        // console.log(pagesToClient);
+
+        //Response to json request
+        if (req.headers['content-type'] == `application/json`) {
+            //add group member name
+            for (const page of pagesToClient) {
+                //add name
+                page.name = `Allan Wang, Saad Qamar, Jinwook Jung`;
+
+                //remove key and value that doesn't need  
+                delete page.a;
+                delete page.p;
+                delete page.linksTo;
+                delete page.body;
+                delete page._id;
+
+                //change key "href" to "url"
+                page['url'] = page.href;
+                delete page.href;
+            }
+            //convert js Array to object
+            const objFromArray = {};
+            pagesFromDB.forEach((item, index) => {
+                objFromArray[`${index + 1}`] = item;
+            });
+            // console.log(objFromArray);
+            res.json(JSON.stringify(objFromArray));
+        }
+
+        res.send(pug.renderFile("./views/wikiResult.pug", {
+            results: pagesToClient
+        }));
+    })();
 });
 
 //START SERVER -----------------------------------------------------------------------------

@@ -1,0 +1,23 @@
+html(lang="en")
+head 
+    title Results Page
+    link(rel="stylesheet", href="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous")
+
+body
+    h1 Search Results
+    if results.length == 0
+        p No results found.
+    else
+        h1 #{results.length} results
+        ul
+            each result in results
+                span URL: 
+                a(href=result.href) #{result.href}
+                br
+                span Title: #{result.title} 
+                br
+                span Search Score: #{result.score}
+                br
+                span PageRank: #{result.rank}
+                br
+                br
