@@ -357,30 +357,19 @@ app.get('/fruits', (req, res) => {
         // console.log(pagesToClient);
 
         //Response to json request
-        if (req.headers['content-type'] == `application/json`) {
-            //add group member name
+        if (req.headers['accept'] === `application/json`) {
+            let results = [];
             for (const page of pagesToClient) {
-                //add name
-                page.name = `Allan Wang, Saad Qamar, Jinwook Jung`;
-
-                //remove key and value that doesn't need  
-                delete page.a;
-                delete page.p;
-                delete page.linksTo;
-                delete page.body;
-                delete page._id;
-
-                //change key "href" to "url"
-                page['url'] = page.href;
-                delete page.href;
+                let pageObj = {};
+                pageObj['name'] = `Allan Wang, Saad Qamar, Jinwook Jung`;
+                pageObj['url'] = page.href;
+                pageObj['score'] = page.score;
+                pageObj['title'] = page.title;
+                pageObj['pr'] = page.rank;
+                results.push(pageObj);
             }
-            //convert js Array to object
-            const objFromArray = {};
-            pagesFromDB.forEach((item, index) => {
-                objFromArray[`${index + 1}`] = item;
-            });
-            // console.log(objFromArray);
-            res.json(JSON.stringify(objFromArray));
+            //console.log(results);
+            return res.json(JSON.stringify(results));
         }
 
         res.send(pug.renderFile("./views/fruitsResult.pug", {
@@ -475,30 +464,19 @@ app.get('/personal', (req, res) => {
         // console.log(pagesToClient);
 
         //Response to json request
-        if (req.headers['content-type'] == `application/json`) {
-            //add group member name
+        if (req.headers['accept'] === `application/json`) {
+            let results = [];
             for (const page of pagesToClient) {
-                //add name
-                page.name = `Allan Wang, Saad Qamar, Jinwook Jung`;
-
-                //remove key and value that doesn't need  
-                delete page.a;
-                delete page.p;
-                delete page.linksTo;
-                delete page.body;
-                delete page._id;
-
-                //change key "href" to "url"
-                page['url'] = page.href;
-                delete page.href;
+                let pageObj = {};
+                pageObj['name'] = `Allan Wang, Saad Qamar, Jinwook Jung`;
+                pageObj['url'] = page.href;
+                pageObj['score'] = page.score;
+                pageObj['title'] = page.title;
+                pageObj['pr'] = page.rank;
+                results.push(pageObj);
             }
-            //convert js Array to object
-            const objFromArray = {};
-            pagesFromDB.forEach((item, index) => {
-                objFromArray[`${index + 1}`] = item;
-            });
-            // console.log(objFromArray);
-            res.json(JSON.stringify(objFromArray));
+            //console.log(results);
+            return res.json(JSON.stringify(results));
         }
 
         res.send(pug.renderFile("./views/wikiResult.pug", {
