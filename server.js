@@ -1,4 +1,4 @@
-//EXPRESS SERVER --------------------------------------------------------------------- 
+//EXPRESS SERVER ---------------------------------------------------------------------------
 const express = require('express');
 const app = express();
 const pug = require('pug');
@@ -14,16 +14,15 @@ const elasticlunr = require("elasticlunr");
 app.set('view engine', 'pug');
 app.set('views', path.join(__dirname, 'views'));
 
-app.listen(PORT, () => {
-    console.log(`Server started on port ${PORT}`);
-});
-
-//MIDDLEWARE SEQUENCE -----------------------------------------------------------------------------------
+//MIDDLEWARE SEQUENCE ----------------------------------------------------------------------
 app.use(express.static('public'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-//CRAWLER for fruits websites----------------------------------------------------------------------------
+//GLOBAL VARIABLES -------------------------------------------------------------------------
+let shouldStopCrawling = false;
+
+//CRAWLER for fruits websites---------------------------------------------------------------
 function crawlFruitsWebsites() {
     const visitedURLs = new Set();
 
@@ -96,76 +95,86 @@ function crawlFruitsWebsites() {
     c.queue('https://people.scs.carleton.ca/~davidmckenney/fruitgraph/N-0.html');
 }
 
-//CRAWLER for personal websites--------------------------------------------------------------------------
+//CRAWLER for Wiki website -----------------------------------------------------------------
 function crawlWikipedia() {
-    let insertionCount = 0;
-    let crawlerStopped = false;
     const visitedURLs = new Set();
+    let countDocuments = 0; // Counter to keep track of the inserted documents
 
     const c = new Crawler({
         maxConnections: 10,
-        respectRobotsTxt: true,
+        jQuery: true,
         callback: async function (error, res, done) {
             if (error) {
-                console.error(error);
-            } else {
-                if (typeof res.$ === "function") {
-                    const $ = res.$;
-                    const title = $("title").text();
+                console.log(error);
+                done();
+                return;
+            }
 
-                    // Only proceed if we have not stopped the crawler
-                    if (!crawlerStopped) {
-                        console.log(`Inserting title: ${title}`);
-                        const { client, db } = await connectToDatabase();
+            if (!shouldStopCrawling && res.$) {
+                const $ = res.$;
+                const currentURL = res.request.uri.href;
 
-                        try {
-                            await insertPageIntoDatabase(db, 'wikiPages', {
-                                title: title,
-                                url: res.request.uri.href,
-                            });
-                            insertionCount++;
-                        } catch (error) {
-                            console.error('Error inserting data into the database', error);
-                        } finally {
-                            await client.close();
-                        }
+                console.log(`Crawling ${currentURL}`);
+                if (!currentURL.startsWith('https://en.wikipedia.org/')) {
+                    done();
+                    console.log('Not a Wikipedia page, skipping...');
+                    return;
+                }
+
+                const title = $("title").text();
+                //console.log(`Title: ${title}`);
+                const anchorTexts = $("a").map(function () { return $(this).text(); }).get().join(', ');
+                const paragraphText = $("p").text();
+                const bodyText = $("body").text();
+
+                let links = $("a[href^='/wiki/']:not([href*=':'])");
+                const linkedTo = [];
+
+                $(links).each(function (i, link) {
+                    const href = $(link).attr('href');
+                    const fullURL = new URL(href, 'https://en.wikipedia.org/').toString();
+                    linkedTo.push(fullURL);
+                    if (!shouldStopCrawling && !visitedURLs.has(fullURL)) {
+                        visitedURLs.add(fullURL);
+                        c.queue(fullURL);
                     }
+                });
 
-                    // If limit is reached, set flag to true
-                    if (insertionCount >= 750) {
-                        crawlerStopped = true;
-                        done();
-                        return; // Stop further processing
-                    }
+                if (countDocuments < 750) {
+                    const { client, db } = await connectToDatabase();
 
-                    // Queue new URLs if crawler has not stopped
-                    if (!crawlerStopped) {
-                        $('a').each(function () {
-                            const toQueueUrl = $(this).attr('href');
-                            if (toQueueUrl && !toQueueUrl.startsWith('#') && !toQueueUrl.startsWith('javascript:')) {
-                                const absoluteUrl = new URL(toQueueUrl, res.request.uri.href).href;
-                                if (!visitedURLs.has(absoluteUrl)) {
-                                    visitedURLs.add(absoluteUrl);
-                                    c.queue(absoluteUrl);
-                                }
-                            }
+                    if (await db.collection("wikiPages").countDocuments({ 'title': title }) == 0) {
+                        //console.log(`Inserting title: ${title}`);
+                        await db.collection("wikiPages").insertOne({
+                            title: title,
+                            href: currentURL,
+                            a: anchorTexts,
+                            p: paragraphText,
+                            body: bodyText,
+                            linksTo: linkedTo,
                         });
+                        countDocuments++;
                     }
-                } else {
-                    // Handle non-HTML
-                    console.warn('The response body was not HTML.');
+
+                    closeDatabaseConnection(client);
+
+                    if (countDocuments >= 750) {
+                        shouldStopCrawling = true; 
+                        c.queue = []; 
+                        console.log("Limiting documents for Wiki crawl... stopping crawler.");
+                    }
                 }
             }
-            done();
+            done(); 
         }
     });
 
     c.on('drain', function () {
-        console.log("Done crawling the wiki pages.");
-        console.log(visitedURLs.size + " Websites in Database...");
+        console.log("Done.");
+        console.log(countDocuments + " Wikipedia pages inserted into the database.");
     });
 
-    // Crawl from the main page
+    // Start crawling from the Wikipedia main page
     c.queue('https://en.wikipedia.org/wiki/Main_Page');
 }
 
@@ -180,20 +189,10 @@ async function connectToDatabase() {
     try {
         const client = await MongoClient.connect("mongodb://127.0.0.1:27017");
         const db = client.db('A1');
-        // console.log("Connected to database.");
         return { client, db };
     } catch (err) {
         console.error("Failed to connect to database.", err);
         throw err;
-    }
-}
-
-//insert single page into the database
-async function insertPageIntoDatabase(db, collectionName, pageData) {
-    try {
-        await db.collection(collectionName).insertOne(pageData);
-    } catch (error) {
-        console.error('Error inserting data into the database', error);
     }
 }
 
@@ -255,7 +254,8 @@ function computePageRankFromAdjMatrix(matrix) {
     return rank;
 }
 
-//ROUTE------------------------------------------------------------------------------------------
+//ROUTES -----------------------------------------------------------------------------------
+
 //index page
 app.get('/', (req, res) => {
     res.send(pug.renderFile("./views/index.pug"));
@@ -270,13 +270,10 @@ app.get('/fruitsSearch', (req, res) => {
 //fruits?q=banana&boost=true&limit=10
 app.get('/fruits', (req, res) => {
 
-
     (async () => {
         let { q, boost, limit } = req.query;
-
         boost = (boost === 'true');
         limit = parseInt(limit);
-
 
         const { client, db } = await connectToDatabase();
         const pagesFromDB = await db.collection('pages').find().toArray();
@@ -321,8 +318,6 @@ app.get('/fruits', (req, res) => {
 
         //each page should not be boosted
         if (!boost) {
-            
-
             //add Search Score
             pagesFromDB.forEach((page) => {
                 refAndSearchScores.forEach((refAndSearchScore) => {
@@ -348,8 +343,6 @@ app.get('/fruits', (req, res) => {
                 })
             });
         }
-
-
 
         // console.log(pagesFromDB);
         console.log(`Search Score is added...`);
@@ -383,7 +376,6 @@ app.get('/fruits', (req, res) => {
             });
             // console.log(objFromArray);
             res.json(JSON.stringify(objFromArray));
-
         }
 
         res.send(pug.renderFile("./views/fruitsResult.pug", {
@@ -395,4 +387,11 @@ app.get('/fruits', (req, res) => {
 //represents a request to search the data from the fruit example
 app.get('/personal', (req, res) => {
 
+    //Requires implementation (ongoing), we use the same logic for fruits here 
+
+});
+
+//START SERVER -----------------------------------------------------------------------------
+app.listen(PORT, () => {
+    console.log(`Server started on port ${PORT}`);
 });
