@@ -15,6 +15,11 @@ MongoClient.connect(mongoURL, function (error, client) {
                 console.log("Created collection: pages");
                 client.close();
             });
+            db.createCollection("wikiPages", function (error, _) {
+                if (error) throw error;
+                console.log("Created collection: wikiPages");
+                client.close();
+            });
             return;
         }
 
@@ -32,6 +37,11 @@ MongoClient.connect(mongoURL, function (error, client) {
                     db.createCollection("pages", function (error, _) {
                         if (error) throw error;
                         console.log("Created collection: pages");
+                        client.close();
+                    });
+                    db.createCollection("wikiPages", function (error, _) {
+                        if (error) throw error;
+                        console.log("Created collection: wikiPages");
                         client.close();
                     });
                 }
